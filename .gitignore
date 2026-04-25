@@ -1,0 +1,9 @@
+node_modules/
+.claude/
+backend/.env
+frontend/.env
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/prisma/migrations/
+dist/
+.DS_Store

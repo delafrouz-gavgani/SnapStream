@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(consumer)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  images       Image[]
+  comments     Comment[]
+  ratings      Rating[]
+  likes        Like[]
+  bookmarks    Bookmark[]
+  following    Follow[]   @relation("Follower")
+  followers    Follow[]   @relation("Following")
+}
+
+model Image {
+  id            Int       @id @default(autoincrement())
+  creatorId     Int
+  title         String
+  caption       String?
+  location      String?
+  peoplePresent String?
+  imageUrl      String
+  storageKey    String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  creator       User      @relation(fields: [creatorId], references: [id])
+  comments      Comment[]
+  ratings       Rating[]
+  likes         Like[]
+  bookmarks     Bookmark[]
+}
+
+model Comment {
+  id          Int      @id @default(autoincrement())
+  imageId     Int
+  userId      Int
+  commentText String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  image       Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+model Rating {
+  id          Int      @id @default(autoincrement())
+  imageId     Int
+  userId      Int
+  ratingValue Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  image       Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@unique([imageId, userId])
+}
+
+
+model Like {
+  id        Int      @id @default(autoincrement())
+  imageId   Int
+  userId    Int
+  createdAt DateTime @default(now())
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+  @@unique([imageId, userId])
+}
+
+model Bookmark {
+  id        Int      @id @default(autoincrement())
+  imageId   Int
+  userId    Int
+  createdAt DateTime @default(now())
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+  @@unique([imageId, userId])
+}
+
+model Follow {
+  id          Int      @id @default(autoincrement())
+  followerId  Int
+  followingId Int
+  createdAt   DateTime @default(now())
+  follower    User     @relation("Follower", fields: [followerId], references: [id])
+  following   User     @relation("Following", fields: [followingId], references: [id])
+  @@unique([followerId, followingId])
+}
+
+enum Role {
+  creator
+  consumer
+}
