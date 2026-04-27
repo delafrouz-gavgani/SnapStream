@@ -1,211 +1,220 @@
-﻿# SnapStream — Scalable Cloud-Native Photo Sharing Platform
+# SnapStream
 
-A coursework project for the module **Scalable Advanced Software Solutions**.
+*Stream your creativity. Discover theirs.*
 
----
-
-## Description
-
-SnapStream is a simplified Instagram-style photo sharing web application demonstrating scalable cloud-native architecture principles. Creators upload photos with rich metadata; consumers browse, search, comment, and rate those photos.
+**Scalable Advanced Software Solutions — Coursework**
 
 ---
 
-## Features
+SnapStream is a media platform that treats photos and videos as first-class content. Creators upload once; the platform handles discovery, engagement, and access control for them. Consumers get a clean, fast feed with real engagement tools — ratings, comments, bookmarks, follows.
 
-| Feature | Description |
-|---------|-------------|
-| Creator upload | Upload photos with title, caption, location, people present |
-| Consumer feed | Paginated grid of all photos |
-| Image search | Full-text search across title, caption, location, people |
-| Image detail | Full photo view with metadata |
-| Comments | Consumers add comments to photos |
-| Ratings | Consumers rate photos 1–5 stars (one rating per image per user) |
-| JWT auth | Stateless authentication with role-based access control |
-| Creator dashboard | Private view of creator's uploaded images with delete |
-| Separate storage | Images stored on filesystem, not in the database |
-| In-memory cache | 60-second TTL cache for feed and search results |
+The whole thing is wired to scale: stateless API, separated file storage, a caching layer, and a static frontend that can live anywhere.
 
 ---
 
-## Tech Stack
+## Roles
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, Vite, Tailwind CSS, React Router v6, Axios |
-| Backend | Node.js, Express.js |
-| Database | PostgreSQL |
-| ORM | Prisma |
-| Auth | JWT (jsonwebtoken), bcryptjs |
-| File upload | Multer |
-| Testing | Jest, Supertest |
+**Creator**
+Registers, uploads media (photo or video) with structured metadata, and manages their library from a dashboard. Can delete their own posts. Cannot access consumer-only features.
+
+**Consumer**
+Registers, browses the feed, searches, rates, comments, bookmarks, and follows creators. Cannot upload media or access creator routes.
+
+Role is set at registration and enforced by JWT middleware on every protected route.
+
+---
+
+## What's Built
+
+### Core features
+- Photo and video upload (up to 200MB via Multer multipart)
+- Metadata fields: title, caption, location, people present
+- Paginated public feed
+- Full-text search across all metadata fields
+- Individual post detail page
+- Star ratings (1–5, one per user per post, upsert on repeat)
+- Comments per post
+- Like toggle
+- Bookmark / save to collection
+- Follow / unfollow creators
+
+### Infrastructure features
+- JWT-based stateless auth with role claims
+- Separate filesystem storage for media (database holds only the URL)
+- 60-second LRU in-memory cache on feed and search
+- Automatic cache invalidation on upload
+- Integration test suite (8 scenarios)
+
+---
+
+## Stack at a Glance
+
+```
+React 18   Vite   Tailwind CSS   React Router v6   Axios
+     ↓            (frontend — static SPA)
+Express.js   Node.js   Prisma   PostgreSQL
+     ↓            (backend — REST API)
+JWT   bcryptjs   Multer   In-memory LRU cache
+     ↓            (cross-cutting concerns)
+Jest   Supertest
+     ↓            (testing)
+```
 
 ---
 
 ## Architecture
 
+SnapStream is split into three independently deployable pieces:
+
+**1. Frontend (React SPA)**
+Compiled to static files by Vite. No server-side rendering. Can be hosted on any CDN, object bucket, or static server. Communicates with the API exclusively over HTTP.
+
+**2. API server (Express.js)**
+Handles all business logic. Validates JWTs, enforces roles, reads and writes to the database via Prisma, stores files via Multer, and caches hot responses in memory. Fully stateless — no process-local user state.
+
+**3. Data layer (PostgreSQL + filesystem)**
+The database stores structured data: users, posts, comments, ratings, bookmarks, follows. Media files live in `uploads/` on disk. The two are kept separate intentionally — the filesystem can be swapped for object storage without touching the schema.
+
 ```
-┌─────────────────┐     HTTP/REST      ┌──────────────────────┐
-│   React Frontend │ ──────────────── │  Express.js Backend   │
-│   (Vite / SPA)  │                   │  (Node.js REST API)   │
-└─────────────────┘                   └──────────┬───────────┘
-                                                  │
-                               ┌──────────────────┴──────────────┐
-                               │                                   │
-                     ┌─────────▼──────────┐         ┌────────────▼────────┐
-                     │   PostgreSQL DB     │         │  Local Uploads Dir  │
-                     │  (users, images,   │         │  /backend/uploads/  │
-                     │  comments, ratings)│         │  (object-storage-   │
-                     └────────────────────┘         │   style)            │
-                                                     └────────────────────┘
+Browser  ──HTTP──▶  Express API  ──Prisma──▶  PostgreSQL
+                         │
+                      Multer──▶  uploads/ (filesystem)
 ```
 
 ---
 
-## Scalability Design
+## Scaling Strategy
 
-1. **Static frontend** — React + Vite outputs static files deployable to any CDN or static host.
-2. **Stateless backend** — JWT auth means no server-side session state; backend can be horizontally scaled behind a load balancer.
-3. **REST API** — Standard HTTP makes the backend replaceable and independently scalable.
-4. **Separate image storage** — Images stored outside the database (local `uploads/` folder, or swappable with OpenStack Swift / S3-compatible store). Database stores only the URL/key.
-5. **In-memory cache** — Feed and search results cached for 60 seconds to reduce database load. Cache is invalidated on new uploads. For production, replace with Redis.
-6. **Database** — PostgreSQL with Prisma ORM; can run on managed free-tier hosts (Supabase, Neon, Railway).
-7. **Load balancer ready** — Because the backend is stateless (JWT), multiple backend instances can sit behind a load balancer (e.g., Nginx on the module cloud platform).
+| Concern | Current approach | Production path |
+|---------|-----------------|-----------------|
+| Auth | JWT signed with shared secret | Rotate secret; add refresh tokens |
+| API instances | Single process | Multiple Node processes behind Nginx upstream |
+| Cache | In-memory per process | Redis shared cache |
+| Media storage | Local `uploads/` directory | OpenStack Swift / S3-compatible |
+| Database reads | Single PostgreSQL instance | Add read replicas for feed queries |
+| Frontend | Local Vite dev server | CDN-hosted static files |
 
 ---
 
-## Database Schema
+## Data Schema
 
 ```
 User
-  id           Int       PK
-  name         String
-  email        String    UNIQUE
-  passwordHash String
-  role         creator | consumer
-  createdAt    DateTime
-  updatedAt    DateTime
+  id, name, email (unique), passwordHash, role, timestamps
 
 Image
-  id            Int       PK
-  creatorId     Int       FK → User.id
-  title         String
-  caption       String?
-  location      String?
-  peoplePresent String?
-  imageUrl      String
-  storageKey    String
-  createdAt     DateTime
-  updatedAt     DateTime
+  id, creatorId, title, caption, location, peoplePresent,
+  imageUrl, storageKey, timestamps
 
 Comment
-  id          Int       PK
-  imageId     Int       FK → Image.id
-  userId      Int       FK → User.id
-  commentText String
-  createdAt   DateTime
-  updatedAt   DateTime
+  id, imageId, userId, commentText, createdAt
 
 Rating
-  id          Int       PK
-  imageId     Int       FK → Image.id
-  userId      Int       FK → User.id
-  ratingValue Int       (1–5)
-  createdAt   DateTime
-  updatedAt   DateTime
-  UNIQUE(imageId, userId)
+  id, imageId, userId, ratingValue (1–5)
+  unique constraint on (imageId, userId)
+
+Bookmark
+  id, imageId, userId
+
+Follow
+  id, followerId, followingId
 ```
 
 ---
 
-## API Routes
+## API Endpoints
 
-| Method | Route | Auth | Role | Description |
-|--------|-------|------|------|-------------|
-| POST | `/api/auth/register` | No | — | Register consumer |
-| POST | `/api/auth/login` | No | — | Login, returns JWT |
-| GET | `/api/auth/me` | Yes | any | Get current user |
-| POST | `/api/images` | Yes | creator | Upload image + metadata |
-| GET | `/api/images` | No | — | Paginated feed |
-| GET | `/api/images/search?q=` | No | — | Search images |
-| GET | `/api/images/mine` | Yes | creator | Creator's own images |
-| GET | `/api/images/:id` | No | — | Image detail |
-| DELETE | `/api/images/:id` | Yes | creator | Delete own image |
-| POST | `/api/images/:id/comments` | Yes | consumer | Add comment |
-| POST | `/api/images/:id/ratings` | Yes | consumer | Add/update rating |
+**Auth**
+```
+POST  /api/auth/register   →  Create consumer account
+POST  /api/auth/login      →  Authenticate, receive JWT
+GET   /api/auth/me         →  [JWT] Current user
+```
+
+**Media**
+```
+POST    /api/images             →  [JWT:creator] Publish new post
+GET     /api/images             →  Public paginated feed  (cached)
+GET     /api/images/search?q=   →  Full-text search       (cached)
+GET     /api/images/mine        →  [JWT:creator] Own posts
+GET     /api/images/:id         →  Public post detail
+DELETE  /api/images/:id         →  [JWT:creator] Delete own post
+```
+
+**Engagement**
+```
+POST  /api/images/:id/comments   →  [JWT:consumer] Add comment
+POST  /api/images/:id/ratings    →  [JWT:consumer] Rate (upsert)
+POST  /api/images/:id/likes      →  [JWT:consumer] Toggle like
+POST  /api/images/:id/bookmarks  →  [JWT:consumer] Toggle bookmark
+POST  /api/users/:id/follow      →  [JWT:consumer] Toggle follow
+```
 
 ---
 
-## Setup Instructions
+## Setup
 
-### Prerequisites
+**Requirements:** Node.js ≥ 18, PostgreSQL ≥ 14, npm
 
-- Node.js 18+
-- PostgreSQL 14+ (running locally)
-- npm
-
-### 1. Clone / extract the project
-
-```bash
-cd SnapStream
-```
-
-### 2. Backend setup
+**Backend setup**
 
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env — set DATABASE_URL to your PostgreSQL connection string
+# Edit .env: set DATABASE_URL to your PostgreSQL connection string
 npm install
 npx prisma generate
 npx prisma migrate dev --name init
 node prisma/seed.js
 npm run dev
+# Running at http://localhost:5000
 ```
 
-Backend runs at `http://localhost:5000`.
-
-### 3. Frontend setup
+**Frontend setup**
 
 ```bash
-cd ../frontend
+cd frontend
 cp .env.example .env
-# VITE_API_URL=http://localhost:5000
+# VITE_API_URL is already set to http://localhost:5000
 npm install
 npm run dev
+# Running at http://localhost:5173
 ```
-
-Frontend runs at `http://localhost:5173`.
 
 ---
 
-## Test Instructions
+## Tests
 
 ```bash
 cd backend
-
-# Ensure a test PostgreSQL database exists (SnapStream_test) or use the same DB
-# Edit .env.test with the test DATABASE_URL
-
+# .env.test should contain DATABASE_URL pointing to a test database
 npm test
 ```
 
-Tests cover:
-1. Creator login
-2. Consumer registration
-3. Creator can upload image
-4. Consumer cannot upload image
-5. Consumer can comment
-6. Consumer can rate
-7. Search works
-8. Unauthenticated upload is rejected
+Eight integration tests run against a live database connection:
+
+1. Consumer registration returns 201 with a JWT
+2. Creator login returns 200 with a JWT
+3. Creator upload returns 201 and persists the image record
+4. Consumer upload attempt returns 403
+5. Unauthenticated upload attempt returns 401
+6. Consumer comment is stored and returned
+7. Consumer rating is stored (upsert on repeat submit)
+8. Search returns posts matching the query term
 
 ---
 
-## Deployment Instructions
+## Production Deployment
 
-### Local / University Cloud Platform
+**Required environment variables**
+```
+DATABASE_URL=postgresql://user:pass@host:5432/snapstream
+JWT_SECRET=minimum-32-character-random-string
+PORT=5000
+CLIENT_URL=https://your-frontend.com
+```
 
-**Backend:**
+**Start the API**
 ```bash
 cd backend
 npm install
@@ -215,87 +224,61 @@ node prisma/seed.js
 node server.js
 ```
 
-**Frontend (build static files):**
+**Build and serve the frontend**
 ```bash
 cd frontend
+npm install
 npm run build
-# Serve the dist/ folder with nginx or any static server
-npx serve dist
+# Point a static server or Nginx at dist/
 ```
 
-**Environment variables for production:**
-```
-DATABASE_URL=postgresql://user:pass@host:5432/SnapStream
-JWT_SECRET=a-long-random-secret
-PORT=5000
-CLIENT_URL=http://your-frontend-domain
-```
-
-**Nginx example (single server):**
+**Nginx reverse proxy**
 ```nginx
 server {
     listen 80;
 
-    location /api {
-        proxy_pass http://localhost:5000;
-    }
-
-    location /uploads {
-        proxy_pass http://localhost:5000;
-    }
-
-    location / {
-        root /var/www/SnapStream/frontend/dist;
+    location /api      { proxy_pass http://localhost:5000; }
+    location /uploads  { proxy_pass http://localhost:5000; }
+    location /         {
+        root /path/to/snapstream/frontend/dist;
         try_files $uri /index.html;
     }
 }
 ```
 
-**Free hosting options (no billing required):**
-- Database: Supabase (free tier) or Neon (free tier)
-- Backend: Railway (free tier) or Render (free tier)
-- Frontend: Vercel or Netlify (free tier)
+**Hosting without a server**
+- Database: Neon or Supabase (free PostgreSQL)
+- API: Render or Railway (free Node.js hosting)
+- Frontend: Netlify or Vercel (free static hosting)
 
 ---
 
-## Demo Accounts
+## Default Accounts
 
-| Role | Email | Password |
-|------|-------|----------|
-| Creator | creator@example.com | password123 |
-| Consumer | consumer@example.com | password123 |
-
----
-
-## Limitations
-
-- In-memory cache resets on server restart; use Redis for persistent cache
-- Local image storage does not persist across deployments; use object storage (OpenStack Swift, Cloudflare R2) in production
-- No email verification or password reset
-- No pagination on creator dashboard
-- No image compression or resizing
+```
+creator@example.com  /  password123  →  Creator role
+consumer@example.com /  password123  →  Consumer role
+```
 
 ---
 
-## Future Improvements
+## Known Gaps
 
-- Integrate OpenStack Swift for production image storage
-- Add Redis for distributed caching
-- Add image compression (Sharp)
-- Add following/follower system
-- Add image tagging
-- Add admin moderation panel
+- In-memory cache is per-process and lost on restart. Redis needed for multi-instance.
+- Media files are stored locally and lost on container rebuild. Object storage needed for persistence.
+- No password reset flow.
+- No image compression or format normalisation on upload.
 
 ---
 
 ## References
 
-- Express.js docs: https://expressjs.com
-- Prisma docs: https://www.prisma.io/docs
-- React docs: https://react.dev
-- Vite docs: https://vitejs.dev
-- Tailwind CSS docs: https://tailwindcss.com
-- JWT: https://jwt.io
-- Multer: https://github.com/expressjs/multer
-- Jest: https://jestjs.io
-- Supertest: https://github.com/ladjs/supertest
+- https://expressjs.com — Express.js
+- https://www.prisma.io/docs — Prisma ORM
+- https://react.dev — React
+- https://vitejs.dev — Vite
+- https://tailwindcss.com — Tailwind CSS
+- https://jwt.io — JSON Web Tokens
+- https://github.com/expressjs/multer — Multer
+- https://jestjs.io — Jest
+- https://github.com/ladjs/supertest — Supertest
